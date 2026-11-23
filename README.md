@@ -2,7 +2,7 @@
 
 [![news-image-20261123](https://make.fun/badge/news-image-20261123.svg)](https://make.fun/competitions/news-image-20261123)
 [![rank](https://make.fun/badge/news-image-20261123/mekzibnn/news-world-today-23/rank.svg)](https://make.fun/competitions/news-image-20261123)
-[![reward](https://make.fun/badge/news-image-20261123/reward.svg)](https://make.fun/competitions/news-image-20261123)
+[![reward](https://make.fun/badge/news-image-20261123/mekzibnn/news-world-today-23/reward.svg)](https://make.fun/competitions/news-image-20261123)
 
 Sum up 23 November's world news in one image. 35 stories from 7 regions,
 every one dated Monday 23 November 2026 — with a red DATE CHECK box for the
@@ -13,7 +13,7 @@ big stories that were *not* Monday's news.
 - **Ukraine says it sank Russian corvette Merkury off Libya** — 7 sea drones,
   attack early Sunday, Zelensky announces Monday.
 - **Dymer toll rises to 14** as boy, 7, pulled alive from rubble.
-- **AI sell-off spreads across Asia; gold jumps past $3,600** — Kospi −2%+,
+- **AI sell-off spreads across Asia; gold jumps past $3,610** — Kospi −2%+,
   gold $3,610/oz, Bitcoin $61,417.
 
 ## How it works
