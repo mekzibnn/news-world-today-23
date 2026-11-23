@@ -72,6 +72,47 @@ check("Nikkei closed Monday (not a Monday move)",
 check("COP31 collapse in DATE CHECK, not a lead",
       "COP31 collapse" in main and "COP31" not in main.split("LEADS")[1].split("BRIEFS")[0].replace("DATE_CHECK", ""))
 
+# body-fit guard (v1.1 fix): no lead body may be silently truncated
+# mid-sentence by draw_wrapped's max_lines. A body that overflows its
+# card must still end its VISIBLE text cleanly (not on a comma or a
+# dangling function word like "on"/"and"/"his"/"from").
+try:
+    from PIL import Image as _Im, ImageDraw as _Id
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("entry_main",
+                                         os.path.join(ROOT, "main.py"))
+    _em = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_em)
+    _img = _Im.new("RGB", (1024, 1024))
+    _dr = _Id.Draw(_img)
+    _DANGLING = {"on", "and", "his", "from", "the", "a", "an", "to", "of",
+                 "in", "was", "were", "with", "for", "by", "as", "at", "is",
+                 "are", "be", "been", "has", "had", "will", "would", "could",
+                 "should", "may", "might", "can", "it", "its", "this",
+                 "that", "he", "she", "they", "we", "you", "not", "up",
+                 "out", "over", "after", "before", "during", "while",
+                 "when", "where", "who", "which", "what", "how", "if",
+                 "then", "than", "so", "but", "or", "nor", "yet"}
+    _bad = []
+    for _i, (_num, _k, _h, _b, _s, _t, _r) in enumerate(_em.LEADS):
+        _big = _i < 3
+        _font = _em.F("sans", 12 if _big else 10)
+        _w = 300 if _big else 176
+        _ml = 3 if _big else 2
+        _lines = _em.wrap(_dr, _b, _font, _w)
+        if len(_lines) <= _ml:
+            continue
+        _vis = " ".join(_lines[:_ml])
+        _words = _vis.rstrip().rstrip(".,!?").split()
+        _last = _words[-1].lower() if _words else ""
+        if _vis.rstrip().endswith((",", "…", "-", ";", ":")) or \
+                _last in _DANGLING:
+            _bad.append(f"L{_num} ends '{_vis[-30:]}'")
+    check("no lead body truncated mid-sentence (visible text ends cleanly)",
+          not _bad, "; ".join(_bad))
+except Exception as _e:
+    print(f"SKIP  body-fit guard (no PIL/import): {_e}")
+
 # README badges
 check("README has live competition badge",
       "https://make.fun/badge/news-image-20261123.svg" in readme)
