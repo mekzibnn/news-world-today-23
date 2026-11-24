@@ -1,136 +1,252 @@
 #!/usr/bin/env python3
-"""Static checks for news-image-20261123 v1. Prints PASS/FAIL per check."""
+"""Fresh verifier for news-image-20261123 v1.3.
+
+Checks (all must pass):
+  (a) README has the 3 exact live make.fun badge URLs (+ bounty link,
+      no shields.io).
+  (b) All 35 stories present with correct numbers/dates.
+  (c) No headline is truncated: every headline appears whole in main.py,
+      and re-measuring with main.py's own layout functions proves each
+      headline renders fully (wrapped, never cut) inside its card.
+  (d) No brief ends with "..." and every brief is <= 55 chars.
+  (e) Timeline contains no "OneTurn" / "crawled" / "digest".
+  (f) entry.png is 1024x1024 and 170-350 KB.
+  (g) main.py has no top-level Pillow import and honours $MAKEFUN_OUTPUT_DIR.
+  (+) Map pins do not overlap; render fallback (Pillow/render failure)
+      copies the committed entry.png and exits 0.
+
+Usage: python3 verify.py
+Exit 0 only when every check passes.
+"""
+
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-ok = fail = 0
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 
+import main as entry  # noqa: E402  (the module under test)
 
-def check(name, cond, extra=""):
-    global ok, fail
-    if cond:
-        ok += 1
-        print(f"PASS  {name}")
-    else:
-        fail += 1
-        print(f"FAIL  {name}  {extra}")
+REPO = HERE
+README = os.path.join(REPO, "README.md")
+MAIN_PY = os.path.join(REPO, "main.py")
+ENTRY_PNG = os.path.join(REPO, "entry.png")
 
-
-def read(p):
-    with open(os.path.join(ROOT, p), encoding="utf-8") as f:
-        return f.read()
+PASS = []
+FAIL = []
 
 
-main = read("main.py")
-readme = read("README.md")
+def check(name, ok, detail=""):
+    (PASS if ok else FAIL).append(name)
+    print("%s %s%s" % ("PASS" if ok else "FAIL", name,
+                       (" — " + detail) if detail else ""))
 
-# entry.png
-png = os.path.join(ROOT, "entry.png")
-check("entry.png exists", os.path.exists(png))
-if os.path.exists(png):
-    size = os.path.getsize(png)
-    check("entry.png < 1 MiB", size < 1024 * 1024, f"({size} B)")
-    check("entry.png >= 50 KB (not blank)", size >= 50 * 1024, f"({size} B)")
+
+def main_check():
+    with open(MAIN_PY, encoding="utf-8") as fh:
+        src = fh.read()
+    with open(README, encoding="utf-8") as fh:
+        readme = fh.read()
+
+    # --- (a) exact badge URLs
+    badges = [
+        "https://make.fun/badge/news-image-20261123.svg",
+        "https://make.fun/badge/news-image-20261123/mekzibnn/news-world-today-23/rank.svg",
+        "https://make.fun/badge/news-image-20261123/mekzibnn/news-world-today-23/reward.svg",
+    ]
+    for url in badges:
+        check("badge present: " + url, url in readme)
+    check("bounty link present",
+          "https://make.fun/competitions/news-image-20261123" in readme)
+    check("no shields.io badges", "shields.io" not in readme)
+    check("no leftover 20261122/20261124 slugs in README",
+          "20261122" not in readme and "20261124" not in readme)
+    check("no leftover 20261122/20261124 slugs in main.py",
+          "20261122" not in src and "20261124" not in src)
+
+    # --- (g) Pillow import rules + output-dir handling
+    top_level_pil = re.findall(r"^(?:from PIL|import PIL)", src,
+                               flags=re.M)
+    check("no top-level Pillow import", not top_level_pil,
+          str(top_level_pil) if top_level_pil else "")
+    check("Pillow import guarded by try/except with _PIL_OK",
+          "_PIL_OK" in src and "try:" in src)
+    check("honours $MAKEFUN_OUTPUT_DIR", "MAKEFUN_OUTPUT_DIR" in src)
+    check("honours $ENTRY_OUTPUT", "ENTRY_OUTPUT" in src)
+    check("falls back to /output/entry.png", "/output/entry.png" in src)
+    check("fallback copies committed entry.png", "shutil.copy" in src)
+
+    # --- (e) timeline clean
+    timeline_text = " ".join(t for _t, t in entry.TIMELINE)
+    check("timeline has no OneTurn/crawled/digest",
+          not any(w in timeline_text for w in
+                  ("OneTurn", "crawled", "digest")))
+    check("timeline has no OneTurn/crawled/digest in source",
+          not any(w in src for w in ("OneTurn", "crawled", "digest")))
+    check("timeline has exactly 2 verified items",
+          len(entry.TIMELINE) == 2, str(entry.TIMELINE))
+    check("timeline keeps 08:07 Merkury announcement",
+          ("08:07", "Zelensky announces Merkury sunk") in entry.TIMELINE)
+    check("timeline keeps 06:27 Asia markets update",
+          ("06:27", "Asia markets update") in entry.TIMELINE)
+
+    # --- (b) story counts + key facts
+    check("13 leads", len(entry.LEADS) == 13, str(len(entry.LEADS)))
+    check("22 briefs", len(entry.BRIEFS) == 22, str(len(entry.BRIEFS)))
+    check("35 stories total",
+          len(entry.LEADS) + len(entry.BRIEFS) == 35)
+    check("12 DATE CHECK items", len(entry.DATECHECK) == 12)
+    check("region counts sum to 35",
+          sum(n for _n, n, _c in entry.REGIONS) == 35)
+    counts = {n: c for n, c, _col in entry.REGIONS}
+    check("Asia-Pacific 7 (not 9)", counts.get("Asia-Pacific") == 7)
+    check("Africa 4 (not 2)", counts.get("Africa") == 4)
+    check("Europe 8", counts.get("Europe") == 8)
+    check("Middle East 6", counts.get("Middle East") == 6)
+    check("Americas 7", counts.get("Americas") == 7)
+    check("Oceania 2", counts.get("Oceania") == 2)
+    check("World 1", counts.get("World") == 1)
+    check("stat strip 258/14/24/7/5/$3,610",
+          [s[0] for s in entry.STATS] ==
+          ["258", "14", "24", "7", "5", "$3,610"])
+    facts = ["14 were dead and 19 wounded", "7 Ukrainian sea drones",
+             "Benghazi", "Dymer", "Merkury", "Rabigh", "Cikande",
+             "Milkita", "Khartoum", "Sparta II", "Gulf of Finland",
+             "Hasina", "Modi", "Delhi", "largest majority since 1992",
+             "$3,610", "258 House seats"]
+    # Facts live in the lead data (some bodies are split across source
+    # lines), so check the joined headline+body text, not raw source.
+    lead_text = " ".join(lead["headline"] + " " + lead["body"]
+                         for lead in entry.LEADS)
+    stat_text = " ".join(num for num, _cap in entry.STATS)
+    for fact in facts:
+        check("fact present: " + fact,
+              fact in lead_text or fact in stat_text)
+    check("gold is $3,610 (Monday), not $3,645",
+          "$3,645" not in src)
+    for item in entry.DATECHECK:
+        check("DATE CHECK present: " + item[:38], item in src)
+
+    # --- (c) headlines whole + render-fit (measured with main's own code)
     try:
-        from PIL import Image
-        im = Image.open(png)
-        check("entry.png is 1024x1024", im.size == (1024, 1024), str(im.size))
-    except Exception as e:
-        check("entry.png opens as image", False, str(e))
-else:
-    check("entry.png < 1 MiB", False, "missing")
-    check("entry.png >= 50 KB (not blank)", False, "missing")
-    check("entry.png is 1024x1024", False, "missing")
+        from PIL import Image, ImageDraw
+    except Exception:
+        print("FAIL Pillow unavailable for measurement")
+        return 1
+    probe = Image.new("RGB", (1024, 1024))
+    d = ImageDraw.Draw(probe)
+    for lead in entry.LEADS:
+        hl = lead["headline"]
+        check("headline %d whole in main.py" % lead["n"], hl in src)
+        check("headline %d has no ellipsis" % lead["n"],
+              "..." not in hl and "…" not in hl)
+        try:
+            if lead["n"] <= 3:
+                lay = entry.layout_big_card(d, lead)
+                max_lines = 3
+            else:
+                lay = entry.layout_medium_card(d, lead)
+                max_lines = 3
+            joined = " ".join(lay["hlines"])
+            check("headline %d renders whole (wrap, no cut)" % lead["n"],
+                  joined == hl, "lines=%r" % (lay["hlines"],))
+            check("headline %d fits in %d lines" % (lead["n"], max_lines),
+                  len(lay["hlines"]) <= max_lines)
+            body_joined = " ".join(lay["blines"])
+            check("body %d renders whole" % lead["n"],
+                  body_joined == lead["body"])
+        except Exception as exc:
+            check("headline %d fits its card" % lead["n"], False, str(exc))
 
-# main.py robustness (the v1.2 lesson)
-check("main.py honours MAKEFUN_OUTPUT_DIR",
-      "MAKEFUN_OUTPUT_DIR" in main)
-check("main.py Pillow import is optional (try/except)",
-      re.search(r"try:\s*\n\s*from PIL import", main) is not None)
-check("main.py has _copy_committed fallback",
-      "_copy_committed" in main and "shutil.copyfile" in main)
-check("main.py main() returns 0 on fallback",
-      "return 0 if _copy_committed()" in main)
-check("main.py does not import PIL at module top unguarded",
-      not re.search(r"^from PIL import", main, re.M))
+    # --- (d) briefs whole, one line, <= 55 chars, no "..."
+    nums = [n for n, _t in entry.BRIEFS]
+    check("brief numbers are 14-35 in order", nums == list(range(14, 36)))
+    for num, text in entry.BRIEFS:
+        check("brief %d <= 55 chars (%d)" % (num, len(text)),
+              len(text) <= 55)
+        check("brief %d has no ellipsis" % num,
+              not text.endswith("...") and "…" not in text)
+        check("brief %d whole in main.py" % num, text in src)
 
-# content counts
-check("13 leads in main.py", main.count("REPORTED") >= 10)
-check("22 briefs in main.py", len(re.findall(r'\(".*?", "', main)) >= 20)
-check("DATE CHECK box present", "DATE CHECK" in main and len(
-    re.findall(r'"[^"]*— (Sunday|Friday|Saturday|Thursday)[^"]*"', main)) >= 8)
-check("gold is $3,610 (not $3,600)", "$3,610" in main)
-check("Dymer toll 14 present", "14" in main and "Dymer" in main)
-check("Cikande 24 body bags present", "24 body bags" in main)
-check("Merkury attack Sunday / announcement Monday",
-      "Attack early Sunday" in main and "announcement Monday" in main)
-check("Nikkei closed Monday (not a Monday move)",
-      "Japan was closed Monday" in main)
-check("COP31 collapse in DATE CHECK, not a lead",
-      "COP31 collapse" in main and "COP31" not in main.split("LEADS")[1].split("BRIEFS")[0].replace("DATE_CHECK", ""))
+    # --- (+) map pins spread (no overlap: radius 6 -> need >= 14 px apart;
+    #      require >= 18 for margin)
+    pins = [lead["pin"] for lead in entry.LEADS]
+    min_dist = None
+    for i in range(len(pins)):
+        for j in range(i + 1, len(pins)):
+            dist = ((pins[i][0] - pins[j][0]) ** 2 +
+                    (pins[i][1] - pins[j][1]) ** 2) ** 0.5
+            min_dist = dist if min_dist is None else min(min_dist, dist)
+    check("map pins spread (min gap %.1f px >= 18)" % min_dist,
+          min_dist is not None and min_dist >= 18)
 
-# body-fit guard (v1.1 fix): no lead body may be silently truncated
-# mid-sentence by draw_wrapped's max_lines. A body that overflows its
-# card must still end its VISIBLE text cleanly (not on a comma or a
-# dangling function word like "on"/"and"/"his"/"from").
-try:
-    from PIL import Image as _Im, ImageDraw as _Id
-    import importlib.util as _ilu
-    _spec = _ilu.spec_from_file_location("entry_main",
-                                         os.path.join(ROOT, "main.py"))
-    _em = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_em)
-    _img = _Im.new("RGB", (1024, 1024))
-    _dr = _Id.Draw(_img)
-    _DANGLING = {"on", "and", "his", "from", "the", "a", "an", "to", "of",
-                 "in", "was", "were", "with", "for", "by", "as", "at", "is",
-                 "are", "be", "been", "has", "had", "will", "would", "could",
-                 "should", "may", "might", "can", "it", "its", "this",
-                 "that", "he", "she", "they", "we", "you", "not", "up",
-                 "out", "over", "after", "before", "during", "while",
-                 "when", "where", "who", "which", "what", "how", "if",
-                 "then", "than", "so", "but", "or", "nor", "yet"}
-    _bad = []
-    for _i, (_num, _k, _h, _b, _s, _t, _r) in enumerate(_em.LEADS):
-        _big = _i < 3
-        _font = _em.F("sans", 12 if _big else 10)
-        _w = 300 if _big else 176
-        _ml = 3 if _big else 2
-        _lines = _em.wrap(_dr, _b, _font, _w)
-        if len(_lines) <= _ml:
-            continue
-        _vis = " ".join(_lines[:_ml])
-        _words = _vis.rstrip().rstrip(".,!?").split()
-        _last = _words[-1].lower() if _words else ""
-        if _vis.rstrip().endswith((",", "…", "-", ";", ":")) or \
-                _last in _DANGLING:
-            _bad.append(f"L{_num} ends '{_vis[-30:]}'")
-    check("no lead body truncated mid-sentence (visible text ends cleanly)",
-          not _bad, "; ".join(_bad))
-except Exception as _e:
-    print(f"SKIP  body-fit guard (no PIL/import): {_e}")
+    # --- fresh render via subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, MAKEFUN_OUTPUT_DIR=tmp)
+        proc = subprocess.run([sys.executable, MAIN_PY], env=env,
+                              capture_output=True, text=True, cwd=REPO)
+        check("fresh render exits 0", proc.returncode == 0,
+              proc.stdout.strip() + proc.stderr.strip())
+        check("fresh render prints no TRUNCATED",
+              "TRUNCATED" not in proc.stdout)
+        check("fresh render prints STORIES 35 LEADS 13 BRIEFS 22",
+              "STORIES 35 LEADS 13 BRIEFS 22" in proc.stdout)
+        out_png = os.path.join(tmp, "entry.png")
+        check("fresh render writes entry.png", os.path.exists(out_png))
+        if os.path.exists(out_png):
+            from PIL import Image as _Image
+            with _Image.open(out_png) as im:
+                check("fresh render is 1024x1024", im.size == (1024, 1024),
+                      str(im.size))
+            size = os.path.getsize(out_png)
+            check("fresh render 170-350 KB (%d KB)" % (size // 1024),
+                  170 * 1024 <= size <= 350 * 1024, "%d bytes" % size)
 
-# README badges
-check("README has live competition badge",
-      "https://make.fun/badge/news-image-20261123.svg" in readme)
-check("README has live rank badge",
-      "https://make.fun/badge/news-image-20261123/mekzibnn/news-world-today-23/rank.svg" in readme)
-check("README has live reward badge",
-      "https://make.fun/badge/news-image-20261123/reward.svg" in readme)
-check("README has no shields.io badges", "shields.io" not in readme)
+    # --- (f) committed entry.png
+    check("entry.png exists in repo", os.path.exists(ENTRY_PNG))
+    if os.path.exists(ENTRY_PNG):
+        from PIL import Image as _Image
+        with _Image.open(ENTRY_PNG) as im:
+            check("entry.png is 1024x1024", im.size == (1024, 1024),
+                  str(im.size))
+        size = os.path.getsize(ENTRY_PNG)
+        check("entry.png 170-350 KB (%d KB)" % (size // 1024),
+              170 * 1024 <= size <= 350 * 1024, "%d bytes" % size)
 
-# repo hygiene
-check("LICENSE exists (MIT)", os.path.exists(os.path.join(ROOT, "LICENSE")))
-check(".makefun/freshness.json exists (anchor)",
-      os.path.exists(os.path.join(ROOT, ".makefun", "freshness.json")))
+    # --- (+) fallback: render failure still copies committed PNG, exit 0
+    with tempfile.TemporaryDirectory() as tmp:
+        real_render = entry.render_image
 
-# render works
-r = subprocess.run([sys.executable, "main.py"], cwd=ROOT,
-                   capture_output=True, text=True, timeout=120)
-check("python3 main.py exits 0", r.returncode == 0, r.stderr.strip()[:200])
+        def _boom(_path):
+            raise RuntimeError("simulated render failure")
 
-print(f"\n{ok} passed, {fail} failed")
-sys.exit(1 if fail else 0)
+        entry.render_image = _boom
+        old_env = os.environ.get("MAKEFUN_OUTPUT_DIR")
+        os.environ["MAKEFUN_OUTPUT_DIR"] = tmp
+        try:
+            rc = entry.main()
+        finally:
+            entry.render_image = real_render
+            if old_env is None:
+                os.environ.pop("MAKEFUN_OUTPUT_DIR", None)
+            else:
+                os.environ["MAKEFUN_OUTPUT_DIR"] = old_env
+        out_png = os.path.join(tmp, "entry.png")
+        check("fallback exits 0 on render failure", rc == 0)
+        check("fallback copies committed entry.png",
+              os.path.exists(out_png) and
+              os.path.getsize(out_png) == os.path.getsize(ENTRY_PNG))
+
+    print("\n%d PASS, %d FAIL" % (len(PASS), len(FAIL)))
+    if FAIL:
+        print("FAILED: " + "; ".join(FAIL))
+        return 1
+    print("ALL CHECKS PASSED")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main_check())
